@@ -5,9 +5,12 @@ import (
 	"strings"
 
 	"github.com/k14s/ytt/pkg/filepos"
+	"github.com/k14s/ytt/pkg/files"
+	"github.com/k14s/ytt/pkg/template"
 	"github.com/k14s/ytt/pkg/template/core"
 	"github.com/k14s/ytt/pkg/yamlmeta"
 	"github.com/k14s/ytt/pkg/yamltemplate"
+	"github.com/k14s/ytt/pkg/yttlibrary"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -15,12 +18,14 @@ import (
 type LibraryModule struct {
 	libraryCtx              LibraryExecutionContext
 	libraryExecutionFactory *LibraryExecutionFactory
+	libraryValues           []*yamlmeta.Document
 }
 
 func NewLibraryModule(libraryCtx LibraryExecutionContext,
-	libraryExecutionFactory *LibraryExecutionFactory) LibraryModule {
+	libraryExecutionFactory *LibraryExecutionFactory,
+	libraryValues []*yamlmeta.Document) LibraryModule {
 
-	return LibraryModule{libraryCtx, libraryExecutionFactory}
+	return LibraryModule{libraryCtx, libraryExecutionFactory, libraryValues}
 }
 
 func (b LibraryModule) AsModule() starlark.StringDict {
@@ -58,13 +63,19 @@ func (l LibraryModule) Get(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryCtx := LibraryExecutionContext{Current: foundLib, Root: foundLib}
 
-	return (&libraryValue{libPath, libraryCtx, nil, l.libraryExecutionFactory}).AsStarlarkValue(), nil
+	values, childLibValues := GetValuesForLibraryAndChildren(l.libraryValues, libraryCtx.Current)
+	if err != nil {
+		return starlark.None, err
+	}
+
+	return (&libraryValue{libPath, libraryCtx, values, childLibValues, l.libraryExecutionFactory}).AsStarlarkValue(), nil
 }
 
 type libraryValue struct {
 	desc                    string // used in error messages
 	libraryCtx              LibraryExecutionContext
 	dataValuess             []*yamlmeta.Document
+	libraryDataValues       []*yamlmeta.Document
 	libraryExecutionFactory *LibraryExecutionFactory
 }
 
@@ -92,7 +103,7 @@ func (l *libraryValue) WithDataValues(thread *starlark.Thread, f *starlark.Built
 
 	dataValues := core.NewStarlarkValue(args.Index(0)).AsGoValue()
 
-	libVal := &libraryValue{l.desc, l.libraryCtx, nil, l.libraryExecutionFactory}
+	libVal := &libraryValue{l.desc, l.libraryCtx, l.dataValuess, l.libraryDataValues, l.libraryExecutionFactory}
 	libVal.dataValuess = append([]*yamlmeta.Document{}, l.dataValuess...)
 	libVal.dataValuess = append(libVal.dataValuess, &yamlmeta.Document{
 		Value:    yamlmeta.NewASTFromInterface(dataValues),
@@ -111,12 +122,15 @@ func (l *libraryValue) Eval(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryLoader := l.libraryExecutionFactory.New(l.libraryCtx)
 
-	astValues, err := libraryLoader.Values(l.dataValuess)
+	astValues, libValues, err := libraryLoader.Values(l.dataValuess)
 	if err != nil {
 		return starlark.None, err
 	}
 
-	result, err := libraryLoader.Eval(astValues)
+	libraryAttachedValues := append([]*yamlmeta.Document{}, libValues...)
+	libraryAttachedValues = append(libValues, l.libraryDataValues...)
+
+	result, err := libraryLoader.Eval(astValues, libraryAttachedValues)
 	if err != nil {
 		return starlark.None, err
 	}
@@ -139,12 +153,15 @@ func (l *libraryValue) Export(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryLoader := l.libraryExecutionFactory.New(l.libraryCtx)
 
-	astValues, err := libraryLoader.Values(l.dataValuess)
+	astValues, libValues, err := libraryLoader.Values(l.dataValuess)
 	if err != nil {
 		return starlark.None, err
 	}
 
-	result, err := libraryLoader.Eval(astValues)
+	libraryAttachedValues := append([]*yamlmeta.Document{}, libValues...)
+	libraryAttachedValues = append(libValues, l.libraryDataValues...)
+
+	result, err := libraryLoader.Eval(astValues, libraryAttachedValues)
 	if err != nil {
 		return starlark.None, err
 	}
@@ -208,4 +225,47 @@ func (l *libraryValue) exportArgs(args starlark.Tuple, kwargs []starlark.Tuple) 
 	}
 
 	return symbolName, locationPath, nil
+}
+
+const (
+	ForChildLib int = iota
+	ForCurrentLib
+	ForOtherLib
+)
+
+func GetValuesForLibraryAndChildren(valueDocs []*yamlmeta.Document,
+	currentLib *Library) ([]*yamlmeta.Document, []*yamlmeta.Document) {
+
+	var currentLibValues []*yamlmeta.Document
+	var childLibValues []*yamlmeta.Document
+
+	for _, doc := range valueDocs {
+		kwargs := template.NewAnnotations(doc).Kwargs(yttlibrary.AnnotationDataValues)
+		for _, kwarg := range kwargs {
+			if kwargName := string(kwarg[0].(starlark.String)); kwargName == "library" {
+				switch forLib := getValuesDocLibrary(string(kwarg[1].(starlark.String)), currentLib); forLib {
+				case ForChildLib:
+					childLibValues = append(childLibValues, doc)
+				case ForCurrentLib:
+					currentLibValues = append(currentLibValues, doc)
+				default:
+				}
+			}
+		}
+	}
+
+	return currentLibValues, childLibValues
+}
+
+func getValuesDocLibrary(libArg string, currentLib *Library) int {
+	argLibraries := strings.Split(libArg, "@")
+	for idx, libraryPath := range argLibraries {
+		_, libraryName := files.SplitPath(libraryPath)
+		if libraryName == currentLib.name && idx == (len(argLibraries)-1) {
+			return ForCurrentLib
+		} else if foundLib, _ := currentLib.FindAccessibleLibrary(libraryPath); foundLib != nil {
+			return ForChildLib
+		}
+	}
+	return ForOtherLib
 }

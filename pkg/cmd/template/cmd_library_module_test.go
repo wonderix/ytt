@@ -392,6 +392,70 @@ lib: |
 	runAndCompare(t, filesToProcess, expectedYAMLTplData)
 }
 
+func TestLibraryAttachedDataValues(t *testing.T) {
+	configBytes := []byte(`
+#@ load("@ytt:template", "template")
+#@ load("@ytt:library", "library")
+#@ load("@ytt:data", "data")
+
+curr: #@ data.values.current_val
+--- #@ template.replace(library.get("lib").eval())`)
+
+	dataValueBytes := []byte(`
+#@data/values
+---
+current_val: val1
+
+#@data/values library="lib"
+---
+lib_val: val2
+
+#@data/values library="lib@github.com/dir/nested-lib"
+---
+nested_lib_val: nested_val2`)
+
+	libDVBytes := []byte(`
+#@data/values
+---
+lib_val: val1`)
+
+	libConfigBytes := []byte(`
+#@ load("@ytt:template", "template")
+#@ load("@ytt:library", "library")
+#@ load("@ytt:data", "data")
+
+lib_val: #@ data.values.lib_val
+--- #@ template.replace(library.get("github.com/dir/nested-lib").eval())`)
+
+	nestedLibConfigBytes := []byte(`
+#@ load("@ytt:data", "data")
+
+nested_lib_val: #@ data.values.nested_lib_val`)
+
+	nestedLibDVBytes := []byte(`
+#@data/values
+---
+nested_lib_val: nested_val1`)
+
+	expectedYAMLTplData := `curr: val1
+---
+lib_val: val2
+---
+nested_lib_val: nested_val2
+`
+
+	filesToProcess := files.NewSortedFiles([]*files.File{
+		files.MustNewFileFromSource(files.NewBytesSource("values.yml", dataValueBytes)),
+		files.MustNewFileFromSource(files.NewBytesSource("config.yml", configBytes)),
+		files.MustNewFileFromSource(files.NewBytesSource("_ytt_lib/lib/values.yml", libDVBytes)),
+		files.MustNewFileFromSource(files.NewBytesSource("_ytt_lib/lib/config.yml", libConfigBytes)),
+		files.MustNewFileFromSource(files.NewBytesSource("_ytt_lib/lib/_ytt_lib/github.com/dir/nested-lib/values.yml", nestedLibDVBytes)),
+		files.MustNewFileFromSource(files.NewBytesSource("_ytt_lib/lib/_ytt_lib/github.com/dir/nested-lib/config.yml", nestedLibConfigBytes)),
+	})
+
+	runAndCompare(t, filesToProcess, expectedYAMLTplData)
+}
+
 func runAndCompare(t *testing.T, filesToProcess []*files.File, expectedYAMLTplData string) {
 	ui := cmdcore.NewPlainUI(false)
 	opts := cmdtpl.NewOptions()

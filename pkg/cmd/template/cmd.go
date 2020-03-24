@@ -115,7 +115,7 @@ func (o *TemplateOptions) RunWithFiles(in TemplateInput, ui cmdcore.PlainUI) Tem
 	libraryCtx := workspace.LibraryExecutionContext{Current: rootLibrary, Root: rootLibrary}
 	libraryLoader := libraryExecutionFactory.New(libraryCtx)
 
-	values, err := libraryLoader.Values(valuesOverlays)
+	values, libraryValues, err := libraryLoader.Values(valuesOverlays)
 	if err != nil {
 		return TemplateOutput{Err: err}
 	}
@@ -128,7 +128,7 @@ func (o *TemplateOptions) RunWithFiles(in TemplateInput, ui cmdcore.PlainUI) Tem
 		}
 	}
 
-	result, err := libraryLoader.Eval(values)
+	result, err := libraryLoader.Eval(values, libraryValues)
 	if err != nil {
 		return TemplateOutput{Err: err}
 	}
