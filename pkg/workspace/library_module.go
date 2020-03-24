@@ -63,18 +63,19 @@ func (l LibraryModule) Get(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryCtx := LibraryExecutionContext{Current: foundLib, Root: foundLib}
 
-	values, childLibValues := GetValuesForLibraryAndChildren(l.libraryValues, libraryCtx.Current)
+	beforeLibModValues, afterLibModValues, childLibValues := GetValuesForLibraryAndChildren(l.libraryValues, libraryCtx.Current)
 	if err != nil {
 		return starlark.None, err
 	}
 
-	return (&libraryValue{libPath, libraryCtx, values, childLibValues, l.libraryExecutionFactory}).AsStarlarkValue(), nil
+	return (&libraryValue{libPath, libraryCtx, beforeLibModValues, afterLibModValues, childLibValues, l.libraryExecutionFactory}).AsStarlarkValue(), nil
 }
 
 type libraryValue struct {
 	desc                    string // used in error messages
 	libraryCtx              LibraryExecutionContext
 	dataValuess             []*yamlmeta.Document
+	afterValuess            []*yamlmeta.Document
 	libraryDataValues       []*yamlmeta.Document
 	libraryExecutionFactory *LibraryExecutionFactory
 }
@@ -103,12 +104,13 @@ func (l *libraryValue) WithDataValues(thread *starlark.Thread, f *starlark.Built
 
 	dataValues := core.NewStarlarkValue(args.Index(0)).AsGoValue()
 
-	libVal := &libraryValue{l.desc, l.libraryCtx, l.dataValuess, l.libraryDataValues, l.libraryExecutionFactory}
+	libVal := &libraryValue{l.desc, l.libraryCtx, l.dataValuess, l.afterValuess, l.libraryDataValues, l.libraryExecutionFactory}
 	libVal.dataValuess = append([]*yamlmeta.Document{}, l.dataValuess...)
 	libVal.dataValuess = append(libVal.dataValuess, &yamlmeta.Document{
 		Value:    yamlmeta.NewASTFromInterface(dataValues),
 		Position: filepos.NewUnknownPosition(),
 	})
+	libVal.dataValuess = append(libVal.dataValuess, l.afterValuess...)
 
 	return libVal.AsStarlarkValue(), nil
 }
@@ -228,33 +230,47 @@ func (l *libraryValue) exportArgs(args starlark.Tuple, kwargs []starlark.Tuple) 
 }
 
 const (
-	ForChildLib int = iota
-	ForCurrentLib
-	ForOtherLib
+	ChildLib int = iota
+	CurrentLib
+	OtherLib
 )
 
 func GetValuesForLibraryAndChildren(valueDocs []*yamlmeta.Document,
-	currentLib *Library) ([]*yamlmeta.Document, []*yamlmeta.Document) {
+	currentLib *Library) ([]*yamlmeta.Document, []*yamlmeta.Document, []*yamlmeta.Document) {
 
-	var currentLibValues []*yamlmeta.Document
+	var currentBeforeModValues []*yamlmeta.Document
+	var currentAfterModValues []*yamlmeta.Document
 	var childLibValues []*yamlmeta.Document
 
 	for _, doc := range valueDocs {
+		var forLib int
+		var afterLibMod bool
+
 		kwargs := template.NewAnnotations(doc).Kwargs(yttlibrary.AnnotationDataValues)
 		for _, kwarg := range kwargs {
-			if kwargName := string(kwarg[0].(starlark.String)); kwargName == "library" {
-				switch forLib := getValuesDocLibrary(string(kwarg[1].(starlark.String)), currentLib); forLib {
-				case ForChildLib:
-					childLibValues = append(childLibValues, doc)
-				case ForCurrentLib:
-					currentLibValues = append(currentLibValues, doc)
-				default:
-				}
+			switch kwargName := string(kwarg[0].(starlark.String)); kwargName {
+			case "library":
+				forLib = getValuesDocLibrary(string(kwarg[1].(starlark.String)), currentLib)
+			case "after_library_module":
+				afterLibMod = true
+			default:
 			}
 		}
+
+		switch forLib {
+		case CurrentLib:
+			if afterLibMod {
+				currentAfterModValues = append(currentAfterModValues, doc)
+			} else {
+				currentBeforeModValues = append(currentBeforeModValues, doc)
+			}
+		case ChildLib:
+			childLibValues = append(childLibValues, doc)
+		}
+
 	}
 
-	return currentLibValues, childLibValues
+	return currentBeforeModValues, currentAfterModValues, childLibValues
 }
 
 func getValuesDocLibrary(libArg string, currentLib *Library) int {
@@ -262,10 +278,10 @@ func getValuesDocLibrary(libArg string, currentLib *Library) int {
 	for idx, libraryPath := range argLibraries {
 		_, libraryName := files.SplitPath(libraryPath)
 		if libraryName == currentLib.name && idx == (len(argLibraries)-1) {
-			return ForCurrentLib
+			return CurrentLib
 		} else if foundLib, _ := currentLib.FindAccessibleLibrary(libraryPath); foundLib != nil {
-			return ForChildLib
+			return ChildLib
 		}
 	}
-	return ForOtherLib
+	return OtherLib
 }
