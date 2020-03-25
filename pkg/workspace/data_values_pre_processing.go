@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/k14s/ytt/pkg/filepos"
+	"github.com/k14s/ytt/pkg/template"
+	"github.com/k14s/ytt/pkg/template/core"
 	"github.com/k14s/ytt/pkg/yamlmeta"
 	"github.com/k14s/ytt/pkg/yamltemplate"
 	"github.com/k14s/ytt/pkg/yttlibrary"
@@ -38,22 +40,28 @@ func (o DataValuesPreProcessing) apply(files []*FileInLibrary) (*yamlmeta.Docume
 	var values *yamlmeta.Document
 	var libraryValues []*yamlmeta.Document
 	for _, fileInLib := range files {
-		valuesDocs, libraryValuesDocs, err := o.templateFile(fileInLib)
+		valuesDocs, err := o.templateFile(fileInLib)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Templating file '%s': %s", fileInLib.File.RelativePath(), err)
 		}
-		libraryValues = append(libraryValues, libraryValuesDocs...)
 
 		for _, valuesDoc := range valuesDocs {
-			if values == nil {
-				values = valuesDoc
-				continue
-			}
-
-			var err error
-			values, err = o.overlay(values, valuesDoc)
+			forLib, err := isLibDataDoc(valuesDoc)
 			if err != nil {
 				return nil, nil, err
+			}
+
+			switch {
+			case forLib:
+				libraryValues = append(libraryValues, valuesDoc)
+			case values == nil:
+				values = valuesDoc
+			default:
+				var err error
+				values, err = o.overlay(values, valuesDoc)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}
@@ -77,20 +85,20 @@ func (p DataValuesPreProcessing) allFileDescs(files []*FileInLibrary) string {
 	return strings.Join(result, ", ")
 }
 
-func (p DataValuesPreProcessing) templateFile(fileInLib *FileInLibrary) ([]*yamlmeta.Document, []*yamlmeta.Document, error) {
+func (p DataValuesPreProcessing) templateFile(fileInLib *FileInLibrary) ([]*yamlmeta.Document, error) {
 	libraryCtx := LibraryExecutionContext{Current: fileInLib.Library, Root: NewRootLibrary(nil)}
 
 	_, resultDocSet, err := p.loader.EvalYAML(libraryCtx, fileInLib.File)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	tplOpts := yamltemplate.MetasOpts{IgnoreUnknown: p.IgnoreUnknownComments}
 
 	// Extract _all_ data values docs from the templated result
-	valuesDocs, libraryValuesDocs, nonValuesDocs, err := yttlibrary.DataValues{resultDocSet, tplOpts}.Extract()
+	valuesDocs, nonValuesDocs, err := yttlibrary.DataValues{resultDocSet, tplOpts}.Extract()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Fail if there any non-empty docs that are not data values
@@ -98,12 +106,12 @@ func (p DataValuesPreProcessing) templateFile(fileInLib *FileInLibrary) ([]*yaml
 		for _, doc := range nonValuesDocs {
 			if !doc.IsEmpty() {
 				errStr := "Expected data values file '%s' to only have data values documents"
-				return nil, nil, fmt.Errorf(errStr, fileInLib.File.RelativePath())
+				return nil, fmt.Errorf(errStr, fileInLib.File.RelativePath())
 			}
 		}
 	}
 
-	return valuesDocs, libraryValuesDocs, nil
+	return valuesDocs, nil
 }
 
 func (p DataValuesPreProcessing) overlay(valuesDoc, newValuesDoc *yamlmeta.Document) (*yamlmeta.Document, error) {
@@ -149,4 +157,27 @@ func (p DataValuesPreProcessing) overlayValuesOverlays(valuesDoc *yamlmeta.Docum
 	}
 
 	return result, nil
+}
+
+func isLibDataDoc(doc *yamlmeta.Document) (bool, error) {
+	kwargs := template.NewAnnotations(doc).Kwargs(yttlibrary.AnnotationDataValues)
+	for _, kwarg := range kwargs {
+		kwargName, err := core.NewStarlarkValue(kwarg[0]).AsString()
+		if err != nil {
+			return false, err
+		}
+
+		kwargValue, err := core.NewStarlarkValue(kwarg[1]).AsString()
+		if err != nil {
+			return false, err
+		}
+
+		if kwargName == "library" {
+			if kwargValue == "" {
+				return false, fmt.Errorf("%s library kwarg cannot be empty", yttlibrary.AnnotationDataValues)
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }

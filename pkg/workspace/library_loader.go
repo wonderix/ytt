@@ -71,12 +71,12 @@ func (ll *LibraryLoader) valuesFiles(loader *TemplateLoader) ([]*FileInLibrary, 
 
 			tplOpts := yamltemplate.MetasOpts{IgnoreUnknown: ll.templateLoaderOpts.IgnoreUnknownComments}
 
-			valuesDocs, libraryValueDocs, _, err := yttlibrary.DataValues{docSet, tplOpts}.Extract()
+			valuesDocs, _, err := yttlibrary.DataValues{docSet, tplOpts}.Extract()
 			if err != nil {
 				return nil, err
 			}
 
-			if len(valuesDocs) > 0 || len(libraryValueDocs) > 0 {
+			if len(valuesDocs) > 0 {
 				valuesFiles = append(valuesFiles, fileInLib)
 				fileInLib.File.MarkForOutput(false)
 			}
