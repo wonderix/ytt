@@ -63,12 +63,22 @@ func (l LibraryModule) Get(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryCtx := LibraryExecutionContext{Current: foundLib, Root: foundLib}
 
-	beforeLibModValues, afterLibModValues, childLibValues := GetValuesForLibraryAndChildren(l.libraryValues, libraryCtx.Current)
+	beforeLibModValues, afterLibModValues, childLibValues, err := GetValuesForLibraryAndChildren(
+		l.libraryValues,
+		libraryCtx.Current,
+	)
 	if err != nil {
 		return starlark.None, err
 	}
 
-	return (&libraryValue{libPath, libraryCtx, beforeLibModValues, afterLibModValues, childLibValues, l.libraryExecutionFactory}).AsStarlarkValue(), nil
+	return (&libraryValue{
+		libPath,
+		libraryCtx,
+		beforeLibModValues,
+		afterLibModValues,
+		childLibValues,
+		l.libraryExecutionFactory,
+	}).AsStarlarkValue(), nil
 }
 
 type libraryValue struct {
@@ -236,7 +246,7 @@ const (
 )
 
 func GetValuesForLibraryAndChildren(valueDocs []*yamlmeta.Document,
-	currentLib *Library) ([]*yamlmeta.Document, []*yamlmeta.Document, []*yamlmeta.Document) {
+	currentLib *Library) ([]*yamlmeta.Document, []*yamlmeta.Document, []*yamlmeta.Document, error) {
 
 	var currentBeforeModValues []*yamlmeta.Document
 	var currentAfterModValues []*yamlmeta.Document
@@ -248,12 +258,19 @@ func GetValuesForLibraryAndChildren(valueDocs []*yamlmeta.Document,
 
 		kwargs := template.NewAnnotations(doc).Kwargs(yttlibrary.AnnotationDataValues)
 		for _, kwarg := range kwargs {
+			var err error
 			switch kwargName := string(kwarg[0].(starlark.String)); kwargName {
 			case "library":
-				forLib = getValuesDocLibrary(string(kwarg[1].(starlark.String)), currentLib)
+				var libPath string
+				libPath, err = core.NewStarlarkValue(kwarg[1]).AsString()
+				forLib = getValuesDocLibrary(libPath, currentLib)
 			case "after_library_module":
-				afterLibMod = true
+				afterLibMod, err = core.NewStarlarkValue(kwarg[1]).AsBool()
 			default:
+			}
+
+			if err != nil {
+				return nil, nil, nil, err
 			}
 		}
 
@@ -270,7 +287,7 @@ func GetValuesForLibraryAndChildren(valueDocs []*yamlmeta.Document,
 
 	}
 
-	return currentBeforeModValues, currentAfterModValues, childLibValues
+	return currentBeforeModValues, currentAfterModValues, childLibValues, nil
 }
 
 func getValuesDocLibrary(libArg string, currentLib *Library) int {
