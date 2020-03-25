@@ -110,7 +110,6 @@ func (l *libraryValue) WithDataValues(thread *starlark.Thread, f *starlark.Built
 		Value:    yamlmeta.NewASTFromInterface(dataValues),
 		Position: filepos.NewUnknownPosition(),
 	})
-	libVal.dataValuess = append(libVal.dataValuess, l.afterValuess...)
 
 	return libVal.AsStarlarkValue(), nil
 }
@@ -124,6 +123,7 @@ func (l *libraryValue) Eval(thread *starlark.Thread, f *starlark.Builtin,
 
 	libraryLoader := l.libraryExecutionFactory.New(l.libraryCtx)
 
+	l.dataValuess = append(l.dataValuess, l.afterValuess...)
 	astValues, libValues, err := libraryLoader.Values(l.dataValuess)
 	if err != nil {
 		return starlark.None, err

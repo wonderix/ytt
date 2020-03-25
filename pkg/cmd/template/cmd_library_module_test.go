@@ -462,12 +462,15 @@ func TestLibraryAfterLibModuleDataValues(t *testing.T) {
 #@ load("@ytt:library", "library")
 #@ load("@ytt:data", "data")
 
-#@ def dv():
+#@ def dv1():
 lib_val1: "foo"
+#@ end
+
+#@ def dv2():
 lib_val2: "bar"
 #@ end
 
---- #@ template.replace(library.get("lib").with_data_values(dv()).eval())`)
+--- #@ template.replace(library.get("lib").with_data_values(dv1()).with_data_values(dv2()).eval())`)
 
 	dataValueBytes := []byte(`
 #@data/values library="lib"
