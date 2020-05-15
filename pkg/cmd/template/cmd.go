@@ -20,6 +20,7 @@ type TemplateOptions struct {
 	RegularFilesSourceOpts RegularFilesSourceOpts
 	FileMarksOpts          FileMarksOpts
 	DataValuesFlags        DataValuesFlags
+	Extender               func(load workspace.ModuleLoader) workspace.ModuleLoader
 }
 
 type TemplateInput struct {
@@ -110,6 +111,7 @@ func (o *TemplateOptions) RunWithFiles(in TemplateInput, ui cmdcore.PlainUI) Tem
 	libraryExecutionFactory := workspace.NewLibraryExecutionFactory(ui, workspace.TemplateLoaderOpts{
 		IgnoreUnknownComments: o.IgnoreUnknownComments,
 		StrictYAML:            o.StrictYAML,
+		Extender:              o.Extender,
 	})
 
 	libraryCtx := workspace.LibraryExecutionContext{Current: rootLibrary, Root: rootLibrary}
